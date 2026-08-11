@@ -323,6 +323,11 @@ Long key-value
     6       N       Value (Bytes)
 
     Offset  Length  Value
+    0       1       0x18
+    1       3       Key (Bytes)
+    4       2       Value (Bytes)
+
+    Offset  Length  Value
     0       1       0x1E
     1       1       K = Key Length (Integer)
     2       K       Key (Bytes)

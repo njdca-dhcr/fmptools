@@ -2,6 +2,8 @@ AUTOMAKE_OPTIONS = foreign dist-zip
 
 lib_LTLIBRARIES = libfmptools.la
 noinst_PROGRAMS = fmpdump
+check_PROGRAMS = test_parse_0x18
+TESTS = $(check_PROGRAMS)
 bin_PROGRAMS =
 include_HEADERS = src/fmp.h
 noinst_HEADERS = src/fmp_internal.h src/bin/usage.h
@@ -32,6 +34,8 @@ endif
 
 fmpdump_SOURCES = src/bin/fmpdump.c
 fmpdump_LDADD = libfmptools.la
+
+test_parse_0x18_SOURCES = test/parse_0x18.c src/block.c
 
 libfmptools_la_SOURCES = \
 	src/block.c \
