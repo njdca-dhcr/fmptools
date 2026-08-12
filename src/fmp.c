@@ -33,6 +33,8 @@
 #include <iconv.h>
 #include <stdarg.h>
 #include <libgen.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 
 #include "fmp.h"
 #include "fmp_internal.h"
@@ -254,6 +256,8 @@ fmp_error_t process_blocks(fmp_file_t *file,
         */
     int next_block = 2;
     int *blocks_visited = calloc(file->num_blocks, sizeof(int));
+    if (!blocks_visited)
+        return FMP_ERROR_MALLOC;
     do {
         fmp_block_t *block = file->blocks[next_block-1];
         retval = process_block(file, block);
@@ -265,12 +269,14 @@ fmp_error_t process_blocks(fmp_file_t *file,
             if (!handle_block || handle_block(block, user_ctx))
                 process_chunk_chain(file, block->chunk, handle_chunk, user_ctx);
                 */
+            free_chunk_chain(block);
             break;
         }
         block->this_id = next_block;
         if (!handle_block || handle_block(block, user_ctx))
             retval = process_chunk_chain(file, block->chunk, handle_chunk, user_ctx);
         next_block = block->next_id;
+        free_chunk_chain(block);
     } while (next_block != 0 && next_block - 1 < file->num_blocks &&
             !blocks_visited[next_block-1] && retval == FMP_OK);
 
@@ -279,12 +285,23 @@ fmp_error_t process_blocks(fmp_file_t *file,
     return retval;
 }
 
-static fmp_file_t *fmp_file_from_stream(FILE *stream, const char *filename, fmp_error_t *errorCode) {
+static fmp_file_t *fmp_file_from_stream(FILE *stream, const char *filename,
+        uint8_t *mapped_data, size_t mapped_len, fmp_error_t *errorCode) {
     uint8_t *sector = NULL;
     fmp_error_t retval = FMP_OK;
     fmp_file_t *file = calloc(1, sizeof(fmp_file_t));
     fmp_block_t *first_block = NULL;
+    if (!file) {
+        if (mapped_data)
+            munmap(mapped_data, mapped_len);
+        fclose(stream);
+        if (errorCode)
+            *errorCode = FMP_ERROR_MALLOC;
+        return NULL;
+    }
     file->stream = stream;
+    file->mapped_data = mapped_data;
+    file->mapped_len = mapped_len;
 
     if (fseek(stream, 0, SEEK_END) == -1) {
         retval = FMP_ERROR_SEEK;
@@ -292,6 +309,10 @@ static fmp_file_t *fmp_file_from_stream(FILE *stream, const char *filename, fmp_
     }
     file->path_capacity = 16;
     file->path = calloc(file->path_capacity, sizeof(fmp_data_t *));
+    if (!file->path) {
+        retval = FMP_ERROR_MALLOC;
+        goto cleanup;
+    }
     file->file_size = ftello(stream);
     rewind(stream);
 
@@ -302,17 +323,31 @@ static fmp_file_t *fmp_file_from_stream(FILE *stream, const char *filename, fmp_
     if (retval != FMP_OK)
         goto cleanup;
 
-    sector = malloc(file->sector_size);
-    if (!sector) {
-        retval = FMP_ERROR_MALLOC;
+    off_t sector_offset = ftello(file->stream);
+    if (sector_offset < 0) {
+        retval = FMP_ERROR_SEEK;
         goto cleanup;
     }
-    if (!fread(sector, file->sector_size, 1, file->stream)) {
-        retval = FMP_ERROR_READ;
-        goto cleanup;
+    if (mapped_data) {
+        if ((size_t)sector_offset > mapped_len ||
+                file->sector_size > mapped_len - (size_t)sector_offset) {
+            retval = FMP_ERROR_READ;
+            goto cleanup;
+        }
+        sector = (uint8_t *)&mapped_data[sector_offset];
+    } else {
+        sector = malloc(file->sector_size);
+        if (!sector) {
+            retval = FMP_ERROR_MALLOC;
+            goto cleanup;
+        }
+        if (!fread(sector, file->sector_size, 1, file->stream)) {
+            retval = FMP_ERROR_READ;
+            goto cleanup;
+        }
     }
 
-    first_block = new_block_from_sector(file, sector, &retval);
+    first_block = new_block_from_sector(file, sector, !mapped_data, &retval);
     if (!first_block)
         goto cleanup;
 
@@ -322,11 +357,13 @@ static fmp_file_t *fmp_file_from_stream(FILE *stream, const char *filename, fmp_
         goto cleanup;
     }
 
-    file = realloc(file, sizeof(fmp_file_t) + first_block->next_id * sizeof(fmp_block_t *));
-    if (!file) {
+    fmp_file_t *resized_file = realloc(
+            file, sizeof(fmp_file_t) + first_block->next_id * sizeof(fmp_block_t *));
+    if (!resized_file) {
         retval = FMP_ERROR_MALLOC;
         goto cleanup;
     }
+    file = resized_file;
     file->num_blocks = first_block->next_id;
     file->blocks[0] = first_block;
     first_block = NULL;
@@ -334,19 +371,38 @@ static fmp_file_t *fmp_file_from_stream(FILE *stream, const char *filename, fmp_
     memset(&file->blocks[1], 0, (file->num_blocks - 1) * sizeof(fmp_block_t *));
 
     int index = 1;
-    while (fread(sector, file->sector_size, 1, file->stream) && index < file->num_blocks) {
-        fmp_block_t *block = new_block_from_sector(file, sector, &retval);
-        if (!block)
-            goto cleanup;
-        file->blocks[index++] = block;
+    if (mapped_data) {
+        size_t offset = (size_t)sector_offset + file->sector_size;
+        while (index < file->num_blocks && offset <= mapped_len &&
+                file->sector_size <= mapped_len - offset) {
+            fmp_block_t *block = new_block_from_sector(
+                    file, &mapped_data[offset], 0, &retval);
+            if (!block)
+                goto cleanup;
+            file->blocks[index++] = block;
+            offset += file->sector_size;
+        }
+    } else {
+        while (fread(sector, file->sector_size, 1, file->stream) &&
+                index < file->num_blocks) {
+            fmp_block_t *block = new_block_from_sector(file, sector, 1, &retval);
+            if (!block)
+                goto cleanup;
+            file->blocks[index++] = block;
+        }
     }
 
     if (index != file->num_blocks)
         retval = FMP_ERROR_BAD_SECTOR_COUNT;
 
 cleanup:
-    free(sector);
-    free(first_block);
+    if (!mapped_data)
+        free(sector);
+    if (first_block) {
+        if (first_block->owns_payload)
+            free((void *)first_block->payload);
+        free(first_block);
+    }
 
     if (retval != FMP_OK) {
         if (file)
@@ -372,19 +428,44 @@ fmp_file_t *fmp_open_buffer(const void *buffer, size_t len, fmp_error_t *errorCo
             *errorCode = FMP_ERROR_OPEN;
         return NULL;
     }
-    return fmp_file_from_stream(stream, NULL, errorCode);
+    return fmp_file_from_stream(stream, NULL, NULL, 0, errorCode);
 }
 
 fmp_file_t *fmp_open_file(const char *path, fmp_error_t *errorCode) {
     fmp_file_t *file = NULL;
-    FILE *stream = fopen(path, "r");
+    FILE *stream = fopen(path, "rb");
     if (!stream) {
         if (errorCode)
             *errorCode = FMP_ERROR_OPEN;
         return NULL;
     }
+    struct stat status;
+    if (fstat(fileno(stream), &status) != 0 || status.st_size <= 0) {
+        fclose(stream);
+        if (errorCode)
+            *errorCode = FMP_ERROR_READ;
+        return NULL;
+    }
+    size_t mapped_len = (size_t)status.st_size;
+    uint8_t *mapped_data = mmap(
+            NULL, mapped_len, PROT_READ, MAP_PRIVATE, fileno(stream), 0);
+    if (mapped_data == MAP_FAILED) {
+        fclose(stream);
+        if (errorCode)
+            *errorCode = FMP_ERROR_MALLOC;
+        return NULL;
+    }
+    (void)posix_madvise(mapped_data, mapped_len, POSIX_MADV_SEQUENTIAL);
     char *path_copy = strdup(path);
-    file = fmp_file_from_stream(stream, basename(path_copy), errorCode);
+    if (!path_copy) {
+        munmap(mapped_data, mapped_len);
+        fclose(stream);
+        if (errorCode)
+            *errorCode = FMP_ERROR_MALLOC;
+        return NULL;
+    }
+    file = fmp_file_from_stream(
+            stream, basename(path_copy), mapped_data, mapped_len, errorCode);
     free(path_copy);
     return file;
 }
@@ -400,8 +481,12 @@ void fmp_close_file(fmp_file_t *file) {
         fmp_block_t *block = file->blocks[i];
         if (block) {
             free_chunk_chain(block);
+            if (block->owns_payload)
+                free((void *)block->payload);
             free(block);
         }
     }
+    if (file->mapped_data)
+        munmap((void *)file->mapped_data, file->mapped_len);
     free(file);
 }

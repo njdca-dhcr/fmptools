@@ -156,7 +156,8 @@ typedef struct fmp_block_s {
     int this_id;
     fmp_chunk_t *chunk;
     size_t payload_len;
-    uint8_t payload[];
+    uint8_t *payload;
+    int owns_payload;
 } fmp_block_t;
 
 typedef struct fmp_file_s {
@@ -178,6 +179,8 @@ typedef struct fmp_file_s {
     size_t path_level;
     size_t path_capacity;
     fmp_data_t **path;
+    uint8_t *mapped_data;
+    size_t mapped_len;
     size_t num_blocks;
     fmp_block_t *blocks[];
 } fmp_file_t;

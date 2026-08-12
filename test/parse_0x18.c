@@ -12,19 +12,19 @@ void debug(const char *fmt, ...) {
 }
 
 int main(void) {
-    static const uint8_t payload[] = {
+    static uint8_t payload[] = {
         0x18, 0x04, 0xE0, 0x0C, 0x34, 0xDA,
         0x18, 0x04, 0xE0, 0x0C, 0x3A, 0x10,
         0x40,
     };
     fmp_file_t file = { 0 };
-    fmp_block_t *block = calloc(1, sizeof(fmp_block_t) + sizeof(payload));
+    fmp_block_t *block = calloc(1, sizeof(fmp_block_t));
     if (!block)
         return 2;
 
     file.version_num = 12;
     block->payload_len = sizeof(payload);
-    memcpy(block->payload, payload, sizeof(payload));
+    block->payload = payload;
 
     if (process_block(&file, block) != FMP_OK)
         return 1;
@@ -47,5 +47,11 @@ int main(void) {
     if (!third || third->code != 0x40 || third->type != FMP_CHUNK_PATH_POP || third->next)
         return 1;
 
+    while (block->chunk) {
+        fmp_chunk_t *chunk = block->chunk;
+        block->chunk = chunk->next;
+        free(chunk);
+    }
+    free(block);
     return 0;
 }

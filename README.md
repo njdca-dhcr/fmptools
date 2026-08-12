@@ -30,5 +30,22 @@ The tools installed to `$PREFIX/bin` include:
 There is also a C library installed that is used by the above tools, but the
 API is subject to change.
 
+Large-file memory behavior
+--
+
+The `v0.2.3-dca.1` fork release bounds parser memory during file-backed
+conversions in two ways:
+
+* File payloads are read through a private, read-only `mmap` instead of being
+  copied into the heap when the file is opened.
+* Parsed chunk chains are released after each block is processed instead of
+  being cached for the lifetime of the open file.
+
+File-backed callers must keep the input file unchanged until `fmp_close_file`
+returns. Buffer-backed callers retain the previous copy-owning behavior. The
+parser still builds an in-memory block index and still scans the block chain
+once per table, so very large files require memory proportional to their block
+count and conversion time grows with the number of tables.
+
 You might also enjoy [fp5dump](https://github.com/qwesda/fp5dump), although
 that project does not read the newer fp7 and fmp12 formats.

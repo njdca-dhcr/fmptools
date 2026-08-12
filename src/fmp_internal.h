@@ -14,7 +14,8 @@ fmp_error_t process_blocks(fmp_file_t *file,
         chunk_handler handle_chunk,
         void *user_ctx);
 fmp_error_t process_block(fmp_file_t *file, fmp_block_t *block);
-fmp_block_t *new_block_from_sector(fmp_file_t *file, const uint8_t *sector, fmp_error_t *error);
+fmp_block_t *new_block_from_sector(fmp_file_t *file, const uint8_t *sector,
+        int copy_payload, fmp_error_t *error);
 
 void convert(iconv_t converter, uint8_t xor_mask,
         char *dst, size_t dst_len, uint8_t *src, size_t src_len);

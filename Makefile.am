@@ -2,8 +2,12 @@ AUTOMAKE_OPTIONS = foreign dist-zip
 
 lib_LTLIBRARIES = libfmptools.la
 noinst_PROGRAMS = fmpdump
-check_PROGRAMS = test_parse_0x18
+check_PROGRAMS = test_parse_0x18 test_release_chunks test_file_payload_storage \
+	test_buffer_payload_storage
 TESTS = $(check_PROGRAMS)
+EXTRA_DIST = \
+	test/data/fmp12/FMburgh_2012_11_07_Database.fmp12 \
+	test/data/fmp12/PortableCode39-2.fmp12
 bin_PROGRAMS =
 include_HEADERS = src/fmp.h
 noinst_HEADERS = src/fmp_internal.h src/bin/usage.h
@@ -36,6 +40,15 @@ fmpdump_SOURCES = src/bin/fmpdump.c
 fmpdump_LDADD = libfmptools.la
 
 test_parse_0x18_SOURCES = test/parse_0x18.c src/block.c
+
+test_release_chunks_SOURCES = test/release_chunks.c
+test_release_chunks_LDADD = libfmptools.la
+
+test_file_payload_storage_SOURCES = test/file_payload_storage.c
+test_file_payload_storage_LDADD = libfmptools.la
+
+test_buffer_payload_storage_SOURCES = test/buffer_payload_storage.c
+test_buffer_payload_storage_LDADD = libfmptools.la
 
 libfmptools_la_SOURCES = \
 	src/block.c \

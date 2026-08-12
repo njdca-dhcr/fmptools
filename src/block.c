@@ -476,7 +476,8 @@ fmp_error_t process_block(fmp_file_t *file, fmp_block_t *block) {
     return process_block_v3(block);
 }
 
-fmp_block_t *new_block_from_sector(fmp_file_t *file, const uint8_t *sector, fmp_error_t *errorCode) {
+fmp_block_t *new_block_from_sector(fmp_file_t *file, const uint8_t *sector,
+        int copy_payload, fmp_error_t *errorCode) {
     size_t payload_len = file->sector_size - file->sector_head_len;
     if (file->payload_len_offset != -1)
         payload_len = copy_int(&sector[file->payload_len_offset], 2);
@@ -485,12 +486,30 @@ fmp_block_t *new_block_from_sector(fmp_file_t *file, const uint8_t *sector, fmp_
             *errorCode = FMP_ERROR_BAD_SECTOR;
         return NULL;
     }
-    fmp_block_t *block = calloc(1, sizeof(fmp_block_t) + payload_len);
+    fmp_block_t *block = calloc(1, sizeof(fmp_block_t));
+    if (!block) {
+        if (errorCode)
+            *errorCode = FMP_ERROR_MALLOC;
+        return NULL;
+    }
     block->payload_len = payload_len;
     block->deleted = sector[0];
     block->level = sector[1];
     block->prev_id = copy_int(&sector[file->prev_sector_offset], 4);
     block->next_id = copy_int(&sector[file->next_sector_offset], 4);
-    memcpy(&block->payload, &sector[file->sector_head_len], payload_len);
+    if (copy_payload) {
+        uint8_t *payload = malloc(payload_len);
+        if (!payload) {
+            free(block);
+            if (errorCode)
+                *errorCode = FMP_ERROR_MALLOC;
+            return NULL;
+        }
+        memcpy(payload, &sector[file->sector_head_len], payload_len);
+        block->payload = payload;
+        block->owns_payload = 1;
+    } else {
+        block->payload = (uint8_t *)&sector[file->sector_head_len];
+    }
     return block;
 }
