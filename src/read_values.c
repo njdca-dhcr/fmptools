@@ -33,6 +33,8 @@ typedef struct fmp_read_values_ctx_s {
     unsigned char *long_string_buf;
     size_t long_string_len;
     size_t long_string_used;
+    unsigned char *utf8_buf;
+    size_t utf8_len;
     size_t target_table_index;
     size_t last_column;
     size_t num_columns;
@@ -44,6 +46,7 @@ typedef struct fmp_read_values_ctx_s {
     fmp_value_handler handle_value;
     const fmp_database_handler_t *database_handler;
     void *user_ctx;
+    fmp_error_t error;
 } fmp_read_values_ctx_t;
 
 typedef struct fmp_read_database_ctx_s {
@@ -65,6 +68,54 @@ static fmp_handler_status_t emit_value(fmp_read_values_ctx_t *ctx, int row,
     if (ctx->handle_value)
         return ctx->handle_value(row, column, value, ctx->user_ctx);
     return FMP_HANDLER_OK;
+}
+
+static int ensure_buffer(unsigned char **buffer, size_t *capacity,
+        size_t required) {
+    if (required <= *capacity)
+        return 1;
+    size_t next = *capacity ? *capacity : 4096;
+    while (next < required) {
+        if (next > SIZE_MAX / 2) {
+            next = required;
+            break;
+        }
+        next *= 2;
+    }
+    unsigned char *resized = realloc(*buffer, next);
+    if (!resized)
+        return 0;
+    *buffer = resized;
+    *capacity = next;
+    return 1;
+}
+
+static fmp_error_t convert_and_emit(fmp_read_values_ctx_t *ctx, int row,
+        fmp_column_t *column, unsigned char *input, size_t input_len) {
+    if (input_len > (SIZE_MAX - 1) / 4)
+        return FMP_ERROR_MALLOC;
+    size_t required = input_len * 4 + 1;
+    if (!ensure_buffer(&ctx->utf8_buf, &ctx->utf8_len, required))
+        return FMP_ERROR_MALLOC;
+    convert(ctx->file->converter, ctx->file->xor_mask,
+            (char *)ctx->utf8_buf, ctx->utf8_len, input, input_len);
+    if (emit_value(ctx, row, column, (char *)ctx->utf8_buf) ==
+            FMP_HANDLER_ABORT)
+        return FMP_ERROR_USER_ABORTED;
+    return FMP_OK;
+}
+
+static fmp_error_t flush_long_string(fmp_read_values_ctx_t *ctx) {
+    if (!ctx->long_string_used)
+        return FMP_OK;
+    if (ctx->last_column == 0 || ctx->last_column > ctx->num_columns)
+        return FMP_ERROR_READ;
+    fmp_error_t error = convert_and_emit(ctx, ctx->current_row,
+            &ctx->columns[ctx->last_column-1], ctx->long_string_buf,
+            ctx->long_string_used);
+    if (error == FMP_OK)
+        ctx->long_string_used = 0;
+    return error;
 }
 
 static int path_is_table_data(fmp_chunk_t *chunk) {
@@ -112,34 +163,35 @@ static chunk_status_t process_value(fmp_chunk_t *chunk, fmp_read_values_ctx_t *c
     if (column->index != ctx->last_column && ctx->long_string_used) {
         if (ctx->handle_value || (ctx->database_handler &&
                     ctx->database_handler->handle_value)) {
-            char utf8_value[ctx->long_string_used*4+1];
-            convert(ctx->file->converter, ctx->file->xor_mask,
-                    utf8_value, sizeof(utf8_value), ctx->long_string_buf, ctx->long_string_used);
-            if (emit_value(ctx, ctx->current_row,
-                    &ctx->columns[ctx->last_column-1], utf8_value) == FMP_HANDLER_ABORT)
+            ctx->error = flush_long_string(ctx);
+            if (ctx->error != FMP_OK)
                 return CHUNK_ABORT;
+        } else {
+            ctx->long_string_used = 0;
         }
-
-        ctx->long_string_used = 0;
     }
     if (path_row(chunk) != ctx->last_row || column->index < ctx->last_column) {
         ctx->current_row++;
     }
     if (long_string) {
-        if (ctx->long_string_buf == NULL ||
-                ctx->long_string_len < ctx->long_string_used + chunk->data.len + 1) {
-            ctx->long_string_len = ctx->long_string_used + chunk->data.len + 1;
-            ctx->long_string_buf = realloc(ctx->long_string_buf, ctx->long_string_len);
+        if (chunk->data.len > SIZE_MAX - ctx->long_string_used - 1) {
+            ctx->error = FMP_ERROR_MALLOC;
+            return CHUNK_ABORT;
+        }
+        size_t required = ctx->long_string_used + chunk->data.len + 1;
+        if (!ensure_buffer(&ctx->long_string_buf, &ctx->long_string_len,
+                    required)) {
+            ctx->error = FMP_ERROR_MALLOC;
+            return CHUNK_ABORT;
         }
         memcpy(&ctx->long_string_buf[ctx->long_string_used], chunk->data.bytes, chunk->data.len);
         ctx->long_string_used += chunk->data.len;
         ctx->long_string_buf[ctx->long_string_used] = '\0';
     } else if (ctx->handle_value || (ctx->database_handler &&
                 ctx->database_handler->handle_value)) {
-        char utf8_value[chunk->data.len*4+1];
-        convert(ctx->file->converter, ctx->file->xor_mask,
-                utf8_value, sizeof(utf8_value), chunk->data.bytes, chunk->data.len);
-        if (emit_value(ctx, ctx->current_row, column, utf8_value) == FMP_HANDLER_ABORT)
+        ctx->error = convert_and_emit(ctx, ctx->current_row, column,
+                chunk->data.bytes, chunk->data.len);
+        if (ctx->error != FMP_OK)
             return CHUNK_ABORT;
     }
     ctx->last_row = path_row(chunk);
@@ -221,15 +273,12 @@ fmp_error_t fmp_read_values(fmp_file_t *file, fmp_table_t *table, fmp_value_hand
     ctx->table = table;
     ctx->user_ctx = user_ctx;
     fmp_error_t retval = process_blocks(file, NULL, handle_chunk_read_values, ctx);
-    if (ctx->long_string_used && ctx->handle_value) {
-        char utf8_value[ctx->long_string_used*4+1];
-        convert(ctx->file->converter, ctx->file->xor_mask,
-                utf8_value, sizeof(utf8_value), ctx->long_string_buf, ctx->long_string_used);
-        emit_value(ctx, ctx->current_row, &ctx->columns[ctx->last_column-1],
-                utf8_value);
-        ctx->long_string_used = 0;
-    }
+    if (ctx->error != FMP_OK)
+        retval = ctx->error;
+    if (retval == FMP_OK && ctx->long_string_used && ctx->handle_value)
+        retval = flush_long_string(ctx);
     free(ctx->long_string_buf);
+    free(ctx->utf8_buf);
     free(ctx->columns);
     free(ctx);
     return retval;
@@ -344,24 +393,11 @@ static chunk_status_t handle_chunk_read_database(fmp_chunk_t *chunk,
     return process_value(chunk, table);
 }
 
-static fmp_error_t flush_database_long_string(fmp_read_values_ctx_t *ctx) {
-    if (!ctx->long_string_used)
-        return FMP_OK;
-    char utf8_value[ctx->long_string_used*4+1];
-    convert(ctx->file->converter, ctx->file->xor_mask,
-            utf8_value, sizeof(utf8_value), ctx->long_string_buf,
-            ctx->long_string_used);
-    if (emit_value(ctx, ctx->current_row,
-            &ctx->columns[ctx->last_column-1], utf8_value) == FMP_HANDLER_ABORT)
-        return FMP_ERROR_USER_ABORTED;
-    ctx->long_string_used = 0;
-    return FMP_OK;
-}
-
 static void free_database_context(fmp_read_database_ctx_t *ctx) {
     if (ctx->table_contexts) {
         for (size_t i=0; i<ctx->tables->count; i++) {
             free(ctx->table_contexts[i].long_string_buf);
+            free(ctx->table_contexts[i].utf8_buf);
             free(ctx->table_contexts[i].columns);
             free(ctx->table_contexts[i].compact_columns.columns);
         }
@@ -439,11 +475,17 @@ fmp_error_t fmp_read_database(fmp_file_t *file,
     }
 
     retval = process_blocks(file, NULL, handle_chunk_read_database, &ctx);
+    for (size_t i=0; i<ctx.tables->count; i++) {
+        if (ctx.table_contexts[i].error != FMP_OK) {
+            retval = ctx.table_contexts[i].error;
+            break;
+        }
+    }
     if (retval == FMP_OK) {
         for (size_t i=0; i<ctx.tables->count && retval == FMP_OK; i++) {
             fmp_read_values_ctx_t *table_ctx = &ctx.table_contexts[i];
             if (!table_ctx->skip)
-                retval = flush_database_long_string(table_ctx);
+                retval = flush_long_string(table_ctx);
             if (retval == FMP_OK && !table_ctx->skip && handler &&
                     handler->end_table &&
                     handler->end_table(table_ctx->table, handler->ctx) ==
