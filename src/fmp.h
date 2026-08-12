@@ -186,6 +186,19 @@ typedef struct fmp_file_s {
 } fmp_file_t;
 
 typedef fmp_handler_status_t (*fmp_value_handler)(int row, fmp_column_t *column, const char *value, void *ctx);
+typedef fmp_handler_status_t (*fmp_table_begin_handler)(fmp_table_t *table,
+        fmp_column_array_t *columns, void *ctx);
+typedef fmp_handler_status_t (*fmp_table_value_handler)(fmp_table_t *table,
+        int row, fmp_column_t *column, const char *value, void *ctx);
+typedef fmp_handler_status_t (*fmp_table_end_handler)(fmp_table_t *table,
+        void *ctx);
+
+typedef struct fmp_database_handler_s {
+    fmp_table_begin_handler begin_table;
+    fmp_table_value_handler handle_value;
+    fmp_table_end_handler end_table;
+    void *ctx;
+} fmp_database_handler_t;
 
 fmp_file_t *fmp_open_file(const char *path, fmp_error_t *errorCode);
 fmp_file_t *fmp_open_buffer(const void *buffer, size_t len, fmp_error_t *errorCode);
@@ -193,6 +206,8 @@ fmp_file_t *fmp_open_buffer(const void *buffer, size_t len, fmp_error_t *errorCo
 fmp_table_array_t *fmp_list_tables(fmp_file_t *file, fmp_error_t *errorCode);
 fmp_column_array_t *fmp_list_columns(fmp_file_t *file, fmp_table_t *table, fmp_error_t *errorCode);
 fmp_error_t fmp_read_values(fmp_file_t *file, fmp_table_t *table, fmp_value_handler handle_value, void *ctx);
+fmp_error_t fmp_read_database(fmp_file_t *file,
+        const fmp_database_handler_t *handler);
 fmp_error_t fmp_dump_file(fmp_file_t *file);
 
 void fmp_close_file(fmp_file_t *file);

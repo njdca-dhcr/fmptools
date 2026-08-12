@@ -33,7 +33,7 @@ API is subject to change.
 Large-file memory behavior
 --
 
-The `v0.2.3-dca.2` fork release bounds parser memory during file-backed
+The `v0.2.3-dca.3` fork release bounds parser memory during file-backed
 conversions in two ways:
 
 * File payloads are read through a private, read-only `mmap` instead of being
@@ -43,12 +43,17 @@ conversions in two ways:
 
 File-backed callers must keep the input file unchanged until `fmp_close_file`
 returns. Buffer-backed callers retain the previous copy-owning behavior. The
-parser still builds an in-memory block index and still scans the block chain
-once per table, so very large files require memory proportional to their block
-count and conversion time grows with the number of tables.
+parser still builds an in-memory block index, so very large files require
+memory proportional to their block count. The `fmp_read_database` interface
+discovers tables, collects all schemas in one block-chain traversal, and then
+dispatches all values in a second traversal. Callers provide begin-table,
+value, and end-table handlers; FileMaker path routing and per-table parse state
+remain inside the library. The older per-table interfaces remain available.
 
 The SQLite converter skips FileMaker helper tables that have no columns;
-SQLite does not permit a zero-column `CREATE TABLE` statement.
+SQLite does not permit a zero-column `CREATE TABLE` statement. It uses the
+database reader and one SQLite transaction, so conversion does not rescan the
+source for every table or commit every row independently.
 
 You might also enjoy [fp5dump](https://github.com/qwesda/fp5dump), although
 that project does not read the newer fp7 and fmp12 formats.
