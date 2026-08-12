@@ -31,9 +31,13 @@ endif
 
 if HAVE_SQLITE
 bin_PROGRAMS += fmp2sqlite
+check_PROGRAMS += test_skip_zero_column_table
 
 fmp2sqlite_SOURCES = src/bin/fmp2sqlite.c src/bin/usage.c
 fmp2sqlite_LDADD = libfmptools.la -lsqlite3
+
+test_skip_zero_column_table_SOURCES = test/skip_zero_column_table.c
+test_skip_zero_column_table_LDADD = -lsqlite3
 endif
 
 fmpdump_SOURCES = src/bin/fmpdump.c

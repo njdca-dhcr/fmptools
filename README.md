@@ -33,7 +33,7 @@ API is subject to change.
 Large-file memory behavior
 --
 
-The `v0.2.3-dca.1` fork release bounds parser memory during file-backed
+The `v0.2.3-dca.2` fork release bounds parser memory during file-backed
 conversions in two ways:
 
 * File payloads are read through a private, read-only `mmap` instead of being
@@ -46,6 +46,9 @@ returns. Buffer-backed callers retain the previous copy-owning behavior. The
 parser still builds an in-memory block index and still scans the block chain
 once per table, so very large files require memory proportional to their block
 count and conversion time grows with the number of tables.
+
+The SQLite converter skips FileMaker helper tables that have no columns;
+SQLite does not permit a zero-column `CREATE TABLE` statement.
 
 You might also enjoy [fp5dump](https://github.com/qwesda/fp5dump), although
 that project does not read the newer fp7 and fmp12 formats.

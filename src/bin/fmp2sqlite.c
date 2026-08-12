@@ -141,6 +141,11 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Error code: %d\n", error);
             return 1;
         }
+        if (columns->count == 0) {
+            fprintf(stderr, "SKIP TABLE \"%s\" (no columns)\n", table->utf8_name);
+            fmp_free_columns(columns);
+            continue;
+        }
         size_t create_query_len = create_query_length(table, columns);
         size_t insert_query_len = insert_query_length(table, columns);
         create_query = realloc(create_query, create_query_len);
