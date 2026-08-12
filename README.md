@@ -47,7 +47,10 @@ conversions in two ways:
 File-backed callers must keep the input file unchanged until `fmp_close_file`
 returns. Buffer-backed callers retain the previous copy-owning behavior. The
 parser still builds an in-memory block index, so very large files require
-memory proportional to their block count. The `fmp_read_database` interface
+memory proportional to their block count. File mapping uses sequential advice
+for the linear sector-index build, then random-access advice for linked
+block-chain scans so backward jumps do not trigger avoidable rereads. The
+`fmp_read_database` interface
 discovers tables, collects all schemas in one block-chain traversal, and then
 dispatches all values in a second traversal. Callers provide begin-table,
 value, and end-table handlers; FileMaker path routing and per-table parse state

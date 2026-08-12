@@ -467,6 +467,13 @@ fmp_file_t *fmp_open_file(const char *path, fmp_error_t *errorCode) {
     file = fmp_file_from_stream(
             stream, basename(path_copy), mapped_data, mapped_len, errorCode);
     free(path_copy);
+    /*
+     * Sector indexing above is a linear walk, but process_blocks follows the
+     * FileMaker linked block chain. Keeping SEQUENTIAL advice for those scans
+     * can evict pages before a backward chain jump and amplify physical reads.
+     */
+    if (file)
+        (void)posix_madvise(mapped_data, mapped_len, POSIX_MADV_RANDOM);
     return file;
 }
 
