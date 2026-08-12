@@ -305,13 +305,7 @@ int main(int argc, char *argv[]) {
     if (sqlite3_close(db) != SQLITE_OK)
         return 1;
 
-    /*
-     * This command is a one-shot converter. On very large files, walking and
-     * freeing the complete decoded block graph can page for hours after the
-     * SQLite database has already been closed. Process exit closes the source
-     * stream and lets the kernel reclaim the address space in bulk.
-     */
-    (void)file;
+    fmp_close_file(file);
 
     return 0;
 }
