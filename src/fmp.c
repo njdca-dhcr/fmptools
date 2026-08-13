@@ -40,6 +40,9 @@
 #include "fmp_internal.h"
 
 #define MAGICK "\x00\x01\x00\x00\x00\x02\x00\x01\x00\x05\x00\x02\x00\x02\xC0"
+#ifndef LINKED_PREFETCH_BLOCKS
+#define LINKED_PREFETCH_BLOCKS 2048
+#endif
 
 typedef struct fmp_ctx_s {
     int did_print_current_path;
@@ -243,11 +246,28 @@ void free_chunk_chain(fmp_block_t *block) {
     block->chunk = NULL;
 }
 
+static int prefetch_linked_block(fmp_file_t *file, int block_id) {
+    if (!file->mapped_data || block_id <= 0 ||
+            (size_t)(block_id - 1) >= file->num_blocks)
+        return 0;
+
+    off_t offset = ((off_t)block_id + (off_t)file->sector_index_shift) *
+        (off_t)file->sector_size;
+    (void)posix_fadvise(fileno(file->stream), offset,
+            (off_t)file->sector_size, POSIX_FADV_WILLNEED);
+
+    int following = file->blocks[block_id - 1]->next_id;
+    return following == block_id ? 0 : following;
+}
+
 fmp_error_t process_blocks(fmp_file_t *file,
         block_handler handle_block,
         chunk_handler handle_chunk,
         void *user_ctx) {
     fmp_error_t retval = FMP_OK;
+    int prefetch_block = file->mapped_data ? 2 : 0;
+    for (size_t i=0; i<LINKED_PREFETCH_BLOCKS && prefetch_block != 0; i++)
+        prefetch_block = prefetch_linked_block(file, prefetch_block);
     /*
     fmp_block_t *block = file->blocks[0];
     process_block(file, block);
@@ -276,6 +296,8 @@ fmp_error_t process_blocks(fmp_file_t *file,
         if (!handle_block || handle_block(block, user_ctx))
             retval = process_chunk_chain(file, block->chunk, handle_chunk, user_ctx);
         next_block = block->next_id;
+        if (prefetch_block != 0)
+            prefetch_block = prefetch_linked_block(file, prefetch_block);
         free_chunk_chain(block);
     } while (next_block != 0 && next_block - 1 < file->num_blocks &&
             !blocks_visited[next_block-1] && retval == FMP_OK);
