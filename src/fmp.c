@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 #include <iconv.h>
 #include <stdarg.h>
@@ -243,6 +244,42 @@ void free_chunk_chain(fmp_block_t *block) {
     block->chunk = NULL;
 }
 
+static size_t logical_prefetch_blocks(void) {
+    const char *value = getenv("FMP_PREFETCH_BLOCKS");
+    if (!value || !*value)
+        return 0;
+
+    char *end = NULL;
+    errno = 0;
+    unsigned long count = strtoul(value, &end, 10);
+    if (errno || end == value || *end || count > 1048576UL)
+        return 0;
+    return (size_t)count;
+}
+
+static void prefetch_logical_blocks(fmp_file_t *file, int next_block,
+        const int *blocks_visited, size_t limit) {
+    if (!limit || !file->mapped_data || !file->stream)
+        return;
+
+    for (size_t i=0; i<limit && next_block != 0 &&
+            next_block - 1 < file->num_blocks &&
+            !blocks_visited[next_block - 1]; i++) {
+        fmp_block_t *block = file->blocks[next_block - 1];
+        if (!block || block->owns_payload)
+            break;
+        ptrdiff_t payload_offset = block->payload - file->mapped_data;
+        if (payload_offset < 0 ||
+                (size_t)payload_offset < file->sector_head_len)
+            break;
+        off_t sector_offset =
+            (off_t)((size_t)payload_offset - file->sector_head_len);
+        (void)posix_fadvise(fileno(file->stream), sector_offset,
+                (off_t)file->sector_size, POSIX_FADV_WILLNEED);
+        next_block = block->next_id;
+    }
+}
+
 fmp_error_t process_blocks(fmp_file_t *file,
         block_handler handle_block,
         chunk_handler handle_chunk,
@@ -258,7 +295,14 @@ fmp_error_t process_blocks(fmp_file_t *file,
     int *blocks_visited = calloc(file->num_blocks, sizeof(int));
     if (!blocks_visited)
         return FMP_ERROR_MALLOC;
+    size_t prefetch_window = logical_prefetch_blocks();
+    size_t prefetched_remaining = 0;
     do {
+        if (prefetch_window && !prefetched_remaining) {
+            prefetch_logical_blocks(file, next_block, blocks_visited,
+                    prefetch_window);
+            prefetched_remaining = prefetch_window;
+        }
         fmp_block_t *block = file->blocks[next_block-1];
         retval = process_block(file, block);
         blocks_visited[next_block-1] = 1;
@@ -277,6 +321,8 @@ fmp_error_t process_blocks(fmp_file_t *file,
             retval = process_chunk_chain(file, block->chunk, handle_chunk, user_ctx);
         next_block = block->next_id;
         free_chunk_chain(block);
+        if (prefetched_remaining)
+            prefetched_remaining--;
     } while (next_block != 0 && next_block - 1 < file->num_blocks &&
             !blocks_visited[next_block-1] && retval == FMP_OK);
 
