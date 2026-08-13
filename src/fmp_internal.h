@@ -13,6 +13,10 @@ fmp_error_t process_blocks(fmp_file_t *file,
         block_handler handle_block,
         chunk_handler handle_chunk,
         void *user_ctx);
+fmp_error_t process_blocks_physical(fmp_file_t *file,
+        block_handler handle_block,
+        chunk_handler handle_chunk,
+        void *user_ctx);
 fmp_error_t process_block(fmp_file_t *file, fmp_block_t *block);
 fmp_block_t *new_block_from_sector(fmp_file_t *file, const uint8_t *sector,
         int copy_payload, fmp_error_t *error);

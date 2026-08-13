@@ -447,7 +447,8 @@ fmp_error_t fmp_read_database(fmp_file_t *file,
             ctx.table_by_index[table->index] = table_ctx;
     }
 
-    retval = process_blocks(file, NULL, handle_chunk_collect_columns, &ctx);
+    retval = process_blocks_physical(
+            file, NULL, handle_chunk_collect_columns, &ctx);
     if (ctx.error != FMP_OK)
         retval = ctx.error;
     if (retval != FMP_OK) {

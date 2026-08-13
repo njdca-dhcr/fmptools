@@ -33,13 +33,16 @@ API is subject to change.
 Large-file memory behavior
 --
 
-The `v0.2.3-dca.4` fork release bounds parser memory during file-backed
-conversions in two ways:
+The `v0.2.3-dca.6` fork release bounds parser memory and avoids random I/O
+during metadata discovery for file-backed conversions:
 
 * File payloads are read through a private, read-only `mmap` instead of being
   copied into the heap when the file is opened.
 * Parsed chunk chains are released after each block is processed instead of
   being cached for the lifetime of the open file.
+* Table and column metadata are discovered from valid linked-chain sectors in
+  physical file order. Record extraction retains logical linked-list order, so
+  row assembly and output order are unchanged.
 * Decoded values and fragmented long-text fields use checked, reusable heap
   buffers instead of value-sized stack allocations. Buffer growth is
   geometric and allocation failures are returned to the caller.
@@ -48,11 +51,11 @@ File-backed callers must keep the input file unchanged until `fmp_close_file`
 returns. Buffer-backed callers retain the previous copy-owning behavior. The
 parser still builds an in-memory block index, so very large files require
 memory proportional to their block count. File mapping uses sequential advice
-for the linear sector-index build, then random-access advice for linked
-block-chain scans so backward jumps do not trigger avoidable rereads. The
-`fmp_read_database` interface
-discovers tables, collects all schemas in one block-chain traversal, and then
-dispatches all values in a second traversal. Callers provide begin-table,
+for the linear sector-index build and physical-order metadata scans, then
+random-access advice for the linked record-data scan. The
+`fmp_read_database` interface discovers tables and collects schemas in
+physical-order traversals, then dispatches all values in one linked traversal.
+Callers provide begin-table,
 value, and end-table handlers; FileMaker path routing and per-table parse state
 remain inside the library. The older per-table interfaces remain available.
 

@@ -134,6 +134,11 @@ fmp_error_t process_blocks(fmp_file_t *file, block_handler handle_block,
     return second_status == CHUNK_NEXT ? FMP_OK : FMP_ERROR_USER_ABORTED;
 }
 
+fmp_error_t process_blocks_physical(fmp_file_t *file,
+        block_handler handle_block, chunk_handler handle_chunk, void *ctx) {
+    return process_blocks(file, handle_block, handle_chunk, ctx);
+}
+
 typedef struct test_context_s {
     int begin_count;
     int value_count;

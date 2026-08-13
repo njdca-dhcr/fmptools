@@ -34,6 +34,7 @@ typedef struct fmp_sqlite_ctx_s {
     sqlite3 *db;
     struct fmp_sqlite_table_ctx_s *tables;
     size_t table_capacity;
+    int announced_schema_complete;
 } fmp_sqlite_ctx_t;
 
 typedef struct fmp_sqlite_table_ctx_s {
@@ -115,6 +116,10 @@ static size_t insert_query_length(fmp_table_t *table, fmp_column_array_t *column
 static fmp_handler_status_t begin_table(fmp_table_t *table,
         fmp_column_array_t *columns, void *ctxp) {
     fmp_sqlite_ctx_t *ctx = (fmp_sqlite_ctx_t *)ctxp;
+    if (!ctx->announced_schema_complete) {
+        fprintf(stderr, "PHASE schema-discovery complete; creating tables and extracting rows\n");
+        ctx->announced_schema_complete = 1;
+    }
     if (columns->count == 0) {
         fprintf(stderr, "SKIP TABLE \"%s\" (no columns)\n", table->utf8_name);
         return FMP_HANDLER_SKIP;
@@ -244,11 +249,13 @@ int main(int argc, char *argv[]) {
     sqlite3 *db = NULL;
     char *zErrMsg = NULL;
     fmp_error_t error = FMP_OK;
+    fprintf(stderr, "PHASE sector-index start\n");
     fmp_file_t *file = fmp_open_file(argv[1], &error);
     if (!file) {
         fprintf(stderr, "Error code: %d\n", error);
         return 1;
     }
+    fprintf(stderr, "PHASE sector-index complete; schema-discovery start\n");
 
     int rc = sqlite3_open_v2(argv[2], &db,
             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
@@ -276,7 +283,7 @@ int main(int argc, char *argv[]) {
     }
 
     fmp_sqlite_ctx_t ctx = { .db = db, .tables = NULL,
-        .table_capacity = 0 };
+        .table_capacity = 0, .announced_schema_complete = 0 };
     fmp_database_handler_t handler = {
         .begin_table = begin_table,
         .handle_value = handle_value,
@@ -295,6 +302,7 @@ int main(int argc, char *argv[]) {
         sqlite3_close(db);
         return 1;
     }
+    fprintf(stderr, "PHASE data-extraction complete; committing SQLite transaction\n");
     rc = sqlite3_exec(db, "COMMIT;\n", NULL, NULL, &zErrMsg);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "Error committing SQLite transaction: %s\n", zErrMsg);

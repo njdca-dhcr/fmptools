@@ -285,6 +285,50 @@ fmp_error_t process_blocks(fmp_file_t *file,
     return retval;
 }
 
+fmp_error_t process_blocks_physical(fmp_file_t *file,
+        block_handler handle_block,
+        chunk_handler handle_chunk,
+        void *user_ctx) {
+    fmp_error_t retval = FMP_OK;
+    unsigned char *included = calloc(file->num_blocks, sizeof(*included));
+    if (!included)
+        return FMP_ERROR_MALLOC;
+
+    int next_block = 2;
+    while (next_block != 0 && next_block - 1 < file->num_blocks &&
+            !included[next_block - 1]) {
+        included[next_block - 1] = 1;
+        next_block = file->blocks[next_block - 1]->next_id;
+    }
+
+    if (file->mapped_data)
+        (void)posix_madvise(file->mapped_data, file->mapped_len,
+                POSIX_MADV_SEQUENTIAL);
+
+    for (size_t i=1; i<file->num_blocks && retval == FMP_OK; i++) {
+        if (!included[i])
+            continue;
+        fmp_block_t *block = file->blocks[i];
+        retval = process_block(file, block);
+        if (retval != FMP_OK) {
+            free_chunk_chain(block);
+            break;
+        }
+        block->this_id = (int)i + 1;
+        if (!handle_block || handle_block(block, user_ctx))
+            retval = process_chunk_chain(file, block->chunk, handle_chunk,
+                    user_ctx);
+        free_chunk_chain(block);
+    }
+
+    if (file->mapped_data)
+        (void)posix_madvise(file->mapped_data, file->mapped_len,
+                POSIX_MADV_RANDOM);
+
+    free(included);
+    return retval;
+}
+
 static fmp_file_t *fmp_file_from_stream(FILE *stream, const char *filename,
         uint8_t *mapped_data, size_t mapped_len, fmp_error_t *errorCode) {
     uint8_t *sector = NULL;

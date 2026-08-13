@@ -68,7 +68,8 @@ fmp_table_array_t *fmp_list_tables(fmp_file_t *file, fmp_error_t *errorCode) {
     fmp_error_t retval = FMP_OK;
     if (file->version_num >= 7) {
         fmp_list_tables_ctx_t ctx = { .array = array, .file = file };
-        retval = process_blocks(file, NULL, handle_chunk_list_tables_v7, &ctx);
+        retval = process_blocks_physical(
+                file, NULL, handle_chunk_list_tables_v7, &ctx);
         int j=0;
         for (int i=0; i<array->count; i++) {
             if (array->tables[i].index) {

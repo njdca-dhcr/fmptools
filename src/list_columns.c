@@ -109,7 +109,8 @@ fmp_column_array_t *fmp_list_columns(fmp_file_t *file, fmp_table_t *table, fmp_e
         .array = array, .file = file,
         .target_table_index = table->index
     };
-    fmp_error_t retval = process_blocks(file, NULL, &handle_chunk_list_columns, &ctx);
+    fmp_error_t retval = process_blocks_physical(
+            file, NULL, &handle_chunk_list_columns, &ctx);
     int j=0; // squash
     for (int i=0; i<array->count; i++) {
         if (array->columns[i].index) {
